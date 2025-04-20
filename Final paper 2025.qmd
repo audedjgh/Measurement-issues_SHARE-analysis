@@ -1,0 +1,111 @@
+---
+title: "Final paper 2025"
+author: "Aude Dejonghe"
+format: 
+  html: default
+  pdf: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r}
+#| message: false
+#| warning: false
+library(here)
+here::i_am("Measurement-issues_SHARE-analysis.Rproj")
+```
+
+```{r}
+#| message: false
+#| warning: false
+
+# Load required libraries
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(scales)
+
+# Import dataset
+load("C:/Users/alili/Documents/Etudes/Dauphine/Master Quantitative Economics/S2/4. Measurement issues/Final project/Measurement-issues_SHARE-analysis/easySHARE data/easySHARE_rel9_0_0.rda")
+easySHARE <- easySHARE_rel9_0_0
+
+# Subset of Sweden
+sweden_data <- subset(easySHARE, substr(mergeid, 1, 2) == "SE")
+```
+
+
+# I. DESCRIPTIVE STATISTICS
+
+```{r}
+#| message: false
+#| warning: false
+
+breaks <- seq(0, 120, by = 5)
+labels <- paste0(breaks[-length(breaks)], "-", breaks[-1] - 1)
+
+# Step 1: Prep main dataset
+income_by_age_gender <- sweden_data %>%
+  filter(!is.na(female) & !is.na(age) & !is.na(thinc_m)) %>%
+  mutate(
+    age_group = cut(age, breaks = breaks, labels = labels),
+    gender = factor(female, levels = c(0, 1), labels = c("Male", "Female"))
+  ) %>%
+  group_by(age_group, gender) %>%
+  summarise(mean_income = mean(thinc_m, na.rm = TRUE), .groups = "drop")
+
+# Step 2: Count observations per age group
+obs_by_age <- sweden_data %>%
+  filter(!is.na(age)) %>%
+  mutate(age_group = cut(age, breaks = breaks, labels = labels)) %>%
+  group_by(age_group) %>%
+  summarise(n_obs = n(), .groups = "drop")
+
+# Step 3: Plot
+ggplot() +
+  # Mean income bars by gender
+  geom_bar(data = income_by_age_gender, 
+           aes(x = age_group, y = mean_income, fill = gender), 
+           stat = "identity", position = "dodge") +
+  # Add line for number of observations (scaled for visibility)
+  geom_line(data = obs_by_age, 
+            aes(x = age_group, y = n_obs * 10, group = 1), 
+            color = "black", size = 1) +
+  geom_point(data = obs_by_age, 
+             aes(x = age_group, y = n_obs * 10), 
+             color = "black", size = 2) +
+  scale_y_continuous(
+    name = "Mean Household Income",
+    sec.axis = sec_axis(~./10, name = "Number of Observations")
+  ) +
+  labs(x = "Age Group", fill = "Gender") +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r setup-values, include=FALSE}
+#| message: false
+#| warning: false
+
+n_obs_sweden <- sweden_data %>%
+  filter(!is.na(thinc_m)) %>%
+  nrow()
+
+mean_income_sweden <- sweden_data %>%
+  summarise(mean = mean(thinc_m, na.rm = TRUE)) %>%
+  pull(mean)
+
+mean_age_sweden <- sweden_data %>%
+  summarise(mean = mean(age, na.rm = TRUE)) %>%
+  pull(mean)
+
+comma(n_obs_sweden)
+comma(mean_income_sweden, accuracy = 1)
+```
+
+The subset of Sweden data contains `r scales::comma(n_obs_sweden)` observations with an average income of `r scales::comma(mean_income_sweden, accuracy = 1)`€, from a population of `r mean_age_sweden` years on average.
+
+
+
