@@ -2,8 +2,8 @@
 title: "Final paper 2025"
 author: "Aude Dejonghe"
 format: 
-  html: default
   pdf: default
+  html: default
 ---
 
 ```{r setup, include=FALSE}
@@ -26,14 +26,42 @@ library(dplyr)
 library(ggplot2)
 library(stringr)
 library(scales)
+library(ggthemes)
+library(hrbrthemes)
+library(viridis)
+library(RColorBrewer)
+library(forcats)
+library(gt)
+library(broom)
+library(ineq)
+library(stargazer)
 
 # Import dataset
 load("C:/Users/alili/Documents/Etudes/Dauphine/Master Quantitative Economics/S2/4. Measurement issues/Final project/Measurement-issues_SHARE-analysis/easySHARE data/easySHARE_rel9_0_0.rda")
 easySHARE <- easySHARE_rel9_0_0
 
+# Transforming -13 codes as NA for income and income percentile
+easySHARE <- easySHARE %>%
+  mutate(across(starts_with("income_pct_w"), ~ ifelse(. %in% c(-13,-10, -12, -15), NA, .))) %>%
+  mutate(thinc_m = ifelse(thinc_m %in% c(-10, -13, -12, -15), NA, thinc_m))%>%
+  mutate(hc002_mod = ifelse(hc002_mod %in% c(-10, -13, -12,-15), NA, hc002_mod)) %>%
+  mutate(age = ifelse(age %in% c(-10, -13, -12,-15), NA, age))%>%
+  mutate(int_month = ifelse(int_month %in% c(-10, -13, -12,-15), NA, int_month))%>%
+  mutate(chronic_mod = ifelse(chronic_mod %in% c(-10, -13, -12,-15), NA, chronic_mod))%>%
+  mutate(sphus = ifelse(sphus %in% c(-10, -13, -12,-15), NA, sphus))%>%
+  mutate(eurod = ifelse(eurod %in% c(-10, -13, -12,-15), NA, eurod))%>%
+  mutate(isced1997_r = ifelse(isced1997_r %in% c(-10, -13, -12,-15), NA, isced1997_r))%>%
+  mutate(books_age10 = ifelse(books_age10 %in% c(-10, -13, -12,-15), NA, books_age10))%>%
+  mutate(adlwa = ifelse(adlwa %in% c(-10, -13, -12,-15), NA, adlwa))%>%
+  mutate(smoking = ifelse(smoking %in% c(-10, -13, -12,-15), NA, smoking))
+
+
 # Subset of Sweden
-sweden_data <- subset(easySHARE, substr(mergeid, 1, 2) == "SE")
+sweden_data <- subset(easySHARE, substr(mergeid, 1, 2) == "SE") %>%
+  mutate(gender = factor(female, levels = c(0, 1), labels = c("Male", "Female")))
 ```
+
+The country chosen for most of the analytics asked is Sweden.
 
 
 # I. DESCRIPTIVE STATISTICS
@@ -42,7 +70,7 @@ sweden_data <- subset(easySHARE, substr(mergeid, 1, 2) == "SE")
 #| message: false
 #| warning: false
 
-breaks <- seq(0, 120, by = 5)
+breaks <- seq(40, 100, by = 5)
 labels <- paste0(breaks[-length(breaks)], "-", breaks[-1] - 1)
 
 # Step 1: Prep main dataset
@@ -52,6 +80,7 @@ income_by_age_gender <- sweden_data %>%
     age_group = cut(age, breaks = breaks, labels = labels),
     gender = factor(female, levels = c(0, 1), labels = c("Male", "Female"))
   ) %>%
+  filter(!is.na(age_group)) %>%
   group_by(age_group, gender) %>%
   summarise(mean_income = mean(thinc_m, na.rm = TRUE), .groups = "drop")
 
@@ -59,6 +88,7 @@ income_by_age_gender <- sweden_data %>%
 obs_by_age <- sweden_data %>%
   filter(!is.na(age)) %>%
   mutate(age_group = cut(age, breaks = breaks, labels = labels)) %>%
+  filter(!is.na(age_group)) %>%
   group_by(age_group) %>%
   summarise(n_obs = n(), .groups = "drop")
 
@@ -79,9 +109,14 @@ ggplot() +
     name = "Mean Household Income",
     sec.axis = sec_axis(~./10, name = "Number of Observations")
   ) +
+  scale_fill_brewer(palette = "Set2") +
   labs(x = "Age Group", fill = "Gender") +
-  theme_minimal() + 
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme_tufte() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_line(color = "grey80"),
+    panel.grid.minor.y = element_blank()
+  )
 ```
 
 
@@ -98,7 +133,7 @@ mean_income_sweden <- sweden_data %>%
   pull(mean)
 
 mean_age_sweden <- sweden_data %>%
-  summarise(mean = mean(age, na.rm = TRUE)) %>%
+  summarise(mean = round(mean(age, na.rm = TRUE))) %>%
   pull(mean)
 
 comma(n_obs_sweden)
@@ -106,6 +141,330 @@ comma(mean_income_sweden, accuracy = 1)
 ```
 
 The subset of Sweden data contains `r scales::comma(n_obs_sweden)` observations with an average income of `r scales::comma(mean_income_sweden, accuracy = 1)`€, from a population of `r mean_age_sweden` years on average.
+
+```{r}
+#| message: false
+#| warning: false
+
+# 1. Define employment labels
+employment_labels <- c(
+  "1" = "Retired",
+  "2" = "Employed",
+  "3" = "Unemployed",
+  "4" = "Disabled",
+  "5" = "Homemaker",
+  "97" = "Other"
+)
+
+# 2. Preparing info on employement type by age
+employment_age <- sweden_data %>%
+  filter(!is.na(age)) %>%
+  mutate(
+    age_group = cut(age, breaks = breaks, labels = labels),
+    employment = factor(as.character(ep005_), levels = names(employment_labels), labels = employment_labels),
+    employment = fct_explicit_na(employment, na_level = "Unknown")
+  ) %>%
+  filter(!is.na(age_group)) %>%
+  group_by(age_group, employment) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(age_group) %>%
+  mutate(percent = n / sum(n) * 100)
+
+
+# 3. Preparing info on median income by age
+sweden_data <- sweden_data %>%
+  rowwise() %>%
+  mutate(avg_income_percentile = mean(c_across(starts_with("income_pct_w")), na.rm = TRUE)) %>%
+  ungroup()
+
+median_inc_percentile_by_age <- sweden_data %>%
+  filter(!is.na(age) & !is.na(avg_income_percentile)) %>%
+  mutate(age_group = cut(age, breaks = breaks, labels = labels)) %>%
+  filter(!is.na(age_group)) %>%
+  group_by(age_group) %>%
+  summarise(median_income_percentile = median(avg_income_percentile, na.rm = TRUE), .groups = "drop")
+
+
+# 4. Plot
+ggplot(employment_age, aes(x = age_group, y = percent, fill = employment)) +
+  geom_bar(stat = "identity") +
+  geom_line(
+    data = median_inc_percentile_by_age,
+    aes(x = age_group, y = median_income_percentile * 10, group = 1),
+    inherit.aes = FALSE,
+    color = "darkblue",
+    size = 1
+  ) +
+  geom_point(
+    data = median_inc_percentile_by_age,
+    aes(x = age_group, y = median_income_percentile * 10),
+    inherit.aes = FALSE,
+    color = "darkblue",
+    size = 2
+  ) +
+  scale_y_continuous(
+    name = "Percentage (Employment Status)",
+    sec.axis = sec_axis(~ . / 10, name = "Median Income percentile")  # Match scaling
+  ) +
+  scale_fill_brewer(palette = "Pastel2") +
+  labs(
+    title = "Employment Situation by Age Group and Median Income Percentile",
+    x = "Age Group",
+    fill = "Employment Status"
+  ) +
+  theme_tufte() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major.y = element_line(color = "grey80"),
+    panel.grid.minor.y = element_blank()
+  )
+```
+
+
+# II. Average household income across 3 countries 
+
+```{r}
+#| message: false
+#| warning: false
+
+# Mapping the countries of interest
+mapping_country <- c(
+  "17" = "France",
+  "19" = "Greece",
+  "13" = "Sweden")
+  
+# Creating and summarising the subset
+income_comparison <- easySHARE %>%
+  filter(
+    country %in% c("13", "17", "19"),
+        wave == 6, 
+    !is.na(thinc_m)
+  ) %>%
+  mutate(country_name = mapping_country[as.character(country)])
+
+income_summary <- income_comparison %>%
+  group_by(country_name) %>%
+  summarise(
+    mean_income = mean(thinc_m, na.rm = TRUE),
+    sd_income = sd(thinc_m, na.rm = TRUE),
+    n = n(),
+    se = sd_income / sqrt(n),  # Standard Error
+    .groups = "drop"
+  )
+
+# Plotting
+ggplot(income_summary, aes(x = country_name, y = mean_income, fill = country_name)) +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean_income - se, ymax = mean_income + se), width = 0.2) +
+  geom_text(aes(label = comma(round(mean_income, 0))), vjust = -0.75, size = 2.5) +
+  labs(
+    title = "Mean Household Income by Country (Wave 6)",
+    x = "Country",
+    y = "Mean Household Income (€)"
+  ) +
+  scale_fill_brewer(palette = "Pastel2")+
+  theme_tufte() +
+  theme(legend.position = "none")
+
+```
+```{r}
+#| message: false
+#| warning: false
+
+# Anova test
+anova_result <- aov(thinc_m ~ country_name, data = income_comparison)
+
+# Tukey test
+tukey_result <- TukeyHSD(anova_result)
+tukey_df <- as.data.frame(tukey_result$country_name)
+tukey_df$comparison <- rownames(tukey_df)
+rownames(tukey_df) <- NULL
+colnames(tukey_df)[colnames(tukey_df) == "p adj"] <- "p_value"
+
+# Table Tukey
+gt(tukey_df) %>%
+  tab_header(
+    title = "Tukey HSD Results"
+  ) %>%
+  fmt_number(columns = c(diff, lwr, upr, p_value), decimals = 3)
+
+```
+Sweden-France not statistically different
+But the 2 other pairs are
+The 3rd place of the ranking would for sure be the Greece but Sweden and France are not rankable, apart from being ex-aeco.
+
+
+# III. OLS regression explaining the frequency of visits to the doctor
+
+```{r, results='asis'}
+#| message: false
+#| warning: false
+
+OLS <- lm(hc002_mod ~ age + int_month + chronic_mod + sphus + eurod + isced1997_r + books_age10 + adlwa + smoking, data = sweden_data)
+
+# female + ch001_ + childhood_health + bmi2 + br015_ + ep005_
+
+#tidy(OLS)
+
+stargazer(OLS,
+         type = "latex",
+         title = "Regression Results")
+```
+
+
+
+hc002_mod contains the number of doctor visits within the past year
+
+gender + nb of children + age + interview month + education + childhood health status + self-perceived health + body mass index + vigorous sports + Current job situation 
+
+
+
+# IV. Effect of a subsidy on inequality - poverty
+
+## a. Effect of a subsidy on income
+
+```{r}
+#| message: false
+#| warning: false
+
+# create new variable of subsidy income
+sweden_data <- sweden_data %>%
+  mutate(
+    subsidy_income = hc002_mod * 10,
+    income_subsidized = thinc_m + subsidy_income
+  )
+mean_increase <- round(mean(sweden_data$subsidy_income, na.rm = TRUE),0)
+```
+
+In the whole population, the implementation of such a susidy increases their income by `r mean_increase`€.
+
+```{r}
+#| message: false
+#| warning: false
+
+# Analysis by age group
+income_by_age <- sweden_data %>%
+  filter(!is.na(age), !is.na(subsidy_income), !is.na(gender)) %>%
+  mutate(age_group = cut(age, breaks = breaks, labels = labels)) %>%
+  group_by(age_group, gender) %>%
+  summarise(avg_gain = mean(subsidy_income, na.rm = TRUE))
+
+ggplot(na.omit(income_by_age), aes(x = age_group, y = avg_gain, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Average Subsidy by Age and Gender",
+    x = "Age Group",
+    y = "Average Subsidy gain (€)",
+    fill = "Gender"
+  ) +
+  theme_tufte() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+#| message: false
+#| warning: false
+
+# Analysis by income percentile
+sweden_data <- sweden_data %>%
+  filter(!is.na(avg_income_percentile), !is.na(gender)) %>%
+  mutate(income_percentile_group = cut(
+    avg_income_percentile,
+    breaks = seq(1, 10, by = 1),
+    include.lowest = TRUE,
+    right = FALSE,
+    labels = paste0("Decile ", 1:9)
+  ))
+
+# Summarising by group
+subsidy_by_decile_gender <- sweden_data %>%
+  group_by(income_percentile_group, gender) %>%
+  summarise(
+    avg_subsidy = mean(subsidy_income, na.rm = TRUE),
+    avg_income_before = mean(thinc_m, na.rm = TRUE),
+    avg_income_after = mean(income_subsidized, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Plotting
+ggplot(subsidy_by_decile_gender, aes(x = income_percentile_group, y = avg_subsidy, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Average Subsidy by Income Decile and Gender",
+    x = "Income Decile Group",
+    y = "Average Subsidy (€)",
+    fill = "Gender"
+  ) +
+  theme_tufte() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+## b. Effect of the subsidy on poverty
+
+“At risk of poverty” = income below 60% of median equivalised income
+compute poverty rate before and after the subsidy using this approach.
+
+```{r}
+#| message: false
+#| warning: false
+
+# Defining the poverty lines
+poverty_line_before <- 0.6 * median(sweden_data$thinc_m, na.rm = TRUE)
+poverty_line_after <- 0.6 * median(sweden_data$income_subsidized, na.rm = TRUE)
+
+# Computing poverty rate before and after
+sweden_data <- sweden_data %>%
+  mutate(
+    is_poor_before = thinc_m < poverty_line_before,
+    is_poor_after = income_subsidized < poverty_line_after
+  )
+
+poverty_rate_before <- mean(sweden_data$is_poor_before, na.rm = TRUE) * 100
+poverty_rate_after <- mean(sweden_data$is_poor_after, na.rm = TRUE) * 100
+poverty_change <- poverty_rate_before - poverty_rate_after
+```
+Using the EU's relative poverty threshold (60% of the median income), the poverty rate in Sweden is estimated at `r round(poverty_rate_before, 2)`% before the subsidy. After implementing a €10 per doctor visit subsidy, the poverty rate falls to `r round(poverty_rate_after, 2)`%, indicating a `r round(poverty_change, 2)` percentage point reduction. This result suggests that the subsidy has a modest but measurable effect on poverty alleviation, especially among those with more frequent health needs.
+
+
+## c. Redistributive effect of a subsidy
+
+Gini coeff : 
+sensitive to the middle of the distribution, and responds clearly to redistributive policies like your €10-per-visit subsidy
+--> compute the coef before and after the subsidy
+
+```{r gini-calc, include=FALSE}
+#| message: false
+#| warning: false
+
+gini_before <- ineq::Gini(na.omit(sweden_data$thinc_m)) * 100
+gini_after <- ineq::Gini(na.omit(sweden_data$income_subsidized)) * 100
+gini_change <- gini_before - gini_after
+```
+
+The Gini coefficient **before** the subsidy is `r round(gini_before, 2)`%, and **after** the subsidy it is `r round(gini_after, 2)`%.  
+This corresponds to a **reduction in inequality of** `r round(gini_change, 2)` percentage points.
+
+
+```{r}
+#| message: false
+#| warning: false
+
+plot(Lc(sweden_data$thinc_m), col = "red", lwd = 2, main = "Lorenz Curve: Before vs After Subsidy")
+lines(Lc(sweden_data$income_subsidized), col = "blue", lwd = 2)
+legend("topleft", legend = c("Before", "After"), col = c("red", "blue"), lwd = 2)
+```
+The change of inequality is so small that the curves don't even show any, they are confounded in one single curve. If there was a significant change, the blue should be closer to the black line, showing perfect equality.
+
+
+# V. Behavioral response to the subsidy
+
+## a. Methodology and simulation of behavioral response
+
+## b. Subsidy progressive or regressive ?
+
+
 
 
 
